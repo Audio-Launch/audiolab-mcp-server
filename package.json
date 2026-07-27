@@ -1,0 +1,43 @@
+{
+  "name": "@audiolabtools/mcp-server",
+  "version": "0.3.0",
+  "description": "MCP server for AudioLab \u2014 loudness (EBU R128 / BS.1770-4), true-peak, voice-quality, and signal analysis for AI agents (Claude, Cursor, any MCP client), via the AudioLab hosted API. No local audio engine required.",
+  "type": "module",
+  "bin": {
+    "audiolabtools-mcp-server": "hosted-server.mjs"
+  },
+  "files": [
+    "hosted-server.mjs",
+    "README.md"
+  ],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "audio",
+    "audio-analysis",
+    "loudness",
+    "lufs",
+    "ebu-r128",
+    "bs-1770",
+    "true-peak",
+    "voice-quality",
+    "audiolab"
+  ],
+  "homepage": "https://audiolab.tools/api",
+  "bugs": {
+    "url": "https://audiolab.tools/contact"
+  },
+  "license": "MIT",
+  "author": "Nathan Renting",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  }
+}
