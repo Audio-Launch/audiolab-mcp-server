@@ -1,0 +1,41 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "tools.audiolab/audiolab",
+  "description": "Loudness (EBU R128 / BS.1770-4), true-peak and voice-quality analysis for local files and URLs.",
+  "version": "0.3.2",
+  "repository": {
+    "url": "https://github.com/Audio-Launch/audiolab-mcp-server",
+    "source": "github"
+  },
+  "websiteUrl": "https://audiolab.tools/api",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@audiolabtools/mcp-server",
+      "version": "0.3.2",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "AUDIOLAB_API_KEY",
+          "description": "API key from https://audiolab.tools/account. Free tier: 1,000 calls and 2 GB per month, no card.",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "AUDIOLAB_API_BASE",
+          "description": "Defaults to https://audiolab.tools/v1 — the value must include the /v1 path segment.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "AUDIOLAB_TIMEOUT_MS",
+          "description": "Request timeout in milliseconds.",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}

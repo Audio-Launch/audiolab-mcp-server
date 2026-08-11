@@ -1,6 +1,7 @@
 {
   "name": "@audiolabtools/mcp-server",
-  "version": "0.3.0",
+  "version": "0.3.2",
+  "mcpName": "tools.audiolab/audiolab",
   "description": "MCP server for AudioLab \u2014 loudness (EBU R128 / BS.1770-4), true-peak, voice-quality, and signal analysis for AI agents (Claude, Cursor, any MCP client), via the AudioLab hosted API. No local audio engine required.",
   "type": "module",
   "bin": {
@@ -26,7 +27,7 @@
   ],
   "homepage": "https://audiolab.tools/api",
   "bugs": {
-    "url": "https://audiolab.tools/contact"
+    "url": "https://github.com/Audio-Launch/audiolab-mcp-server/issues"
   },
   "license": "MIT",
   "author": "Nathan Renting",
@@ -39,5 +40,9 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.4.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Audio-Launch/audiolab-mcp-server.git"
   }
 }

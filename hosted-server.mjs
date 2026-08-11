@@ -29,7 +29,14 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
 import { z } from 'zod';
+
+// The version reported over MCP used to be a literal with a "keep in sync with
+// package.json" comment next to it. It drifted anyway: the package shipped 0.3.1
+// while every initialize response still announced 0.3.0. Read it instead, so the
+// comment cannot be ignored and the two cannot disagree.
+const { version: PKG_VERSION } = createRequire(import.meta.url)('./package.json');
 
 // Vercel serverless caps a raw request body at ~4.5 MB, so small files POST directly and
 // larger ones go through the signed-URL storage flow. The bucket policy caps at 50 MB.
@@ -194,7 +201,7 @@ const sourceShape = (local) => local
   : { url: z.string().url().describe('Public https URL to the audio file.') };
 
 export function buildServer({ apiKey, local = false } = {}) {
-  const server = new McpServer({ name: 'audiolab', version: '0.3.0' }); // keep in sync with package.json
+  const server = new McpServer({ name: 'audiolab', version: PKG_VERSION });
   const toolNames = [];
   const tool = (name, def, handler) => { server.registerTool(name, def, handler); toolNames.push(name); };
   const src = sourceShape(local);
@@ -313,7 +320,13 @@ if (isMain && process.argv.includes('--selftest')) {
   await assert.rejects(() => batchSources({ urls: Array.from({ length: 21 }, (_, n) => `https://x/${n}.wav`) }, 'mixlab/analyze', {}, 'al_live_selftest', false), /max 20/, 'oversized batch rejected before network');
   if (prev) process.env.AUDIOLAB_API_KEY = prev; else delete process.env.AUDIOLAB_API_KEY;
 
-  console.log('selftest ok · 9 tools (incl. analyze_batch) + missing-key guard + remote-path refusals + batch guards');
+  // The version announced over MCP drifted from the published package once already
+  // (server said 0.3.0, npm had 0.3.1). Now it is read from package.json, and this
+  // asserts the read actually resolved rather than silently yielding undefined.
+  assert.equal(typeof PKG_VERSION, 'string', 'version resolves from package.json');
+  assert.match(PKG_VERSION, /^\d+\.\d+\.\d+/, 'version looks like a semver');
+
+  console.log(`selftest ok · v${PKG_VERSION} · 9 tools (incl. analyze_batch) + missing-key guard + remote-path refusals + batch guards`);
   process.exit(0);
 }
 
