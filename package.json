@@ -1,6 +1,6 @@
 {
   "name": "@audiolabtools/mcp-server",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "mcpName": "tools.audiolab/audiolab",
   "description": "MCP server for AudioLab \u2014 loudness (EBU R128 / BS.1770-4), true-peak, voice-quality, and signal analysis for AI agents (Claude, Cursor, any MCP client), via the AudioLab hosted API. No local audio engine required.",
   "type": "module",

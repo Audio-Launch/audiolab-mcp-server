@@ -1,8 +1,8 @@
-{
+﻿{
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "tools.audiolab/audiolab",
   "description": "Loudness (EBU R128 / BS.1770-4), true-peak and voice-quality analysis for local files and URLs.",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "repository": {
     "url": "https://github.com/Audio-Launch/audiolab-mcp-server",
     "source": "github"
@@ -12,7 +12,7 @@
     {
       "registryType": "npm",
       "identifier": "@audiolabtools/mcp-server",
-      "version": "0.3.2",
+      "version": "0.3.3",
       "transport": {
         "type": "stdio"
       },
@@ -25,7 +25,7 @@
         },
         {
           "name": "AUDIOLAB_API_BASE",
-          "description": "Defaults to https://audiolab.tools/v1 — the value must include the /v1 path segment.",
+          "description": "Defaults to https://audiolab.tools/v1 â€” the value must include the /v1 path segment.",
           "isRequired": false,
           "isSecret": false
         },

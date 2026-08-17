@@ -66,7 +66,7 @@ Example asks to your AI:
 |---|---|---|
 | `AUDIOLAB_API_KEY` | — (required) | Your API key. |
 | `AUDIOLAB_API_BASE` | `https://audiolab.tools/v1` | Override the API base (must be `https://`). |
-| `AUDIOLAB_TIMEOUT_MS` | `60000` | Per-request timeout in milliseconds. |
+| `AUDIOLAB_TIMEOUT_MS` | `330000` | Per-request timeout in milliseconds (long files and batches stream server-side and can legitimately take minutes). |
 
 ## Privacy
 
@@ -80,6 +80,7 @@ machine, don't use a hosted analyser.
 ## Limits
 
 - Local files: up to **50 MB** (host bigger ones at a public URL).
+- Duration: loudness routes (`analyze_loudness`, `check_target`, `analyze_timeseries`, `get_spectrum`) handle **long files** (podcast episodes, full sets — up to ~3 h) via server-side streaming; voice/signal routes are limited to ~7 minutes.
 - One file per call (agents loop for many); one-shot (no streaming/realtime).
 - Rate and monthly limits are enforced by the API, per key.
 

@@ -21,7 +21,7 @@
 //       "env": { "AUDIOLAB_API_KEY": "al_live_yourkey" } } } }
 //
 // Env: AUDIOLAB_API_KEY (required at call time for stdio mode), AUDIOLAB_API_BASE
-// (default https://audiolab.tools/v1, must be https), AUDIOLAB_TIMEOUT_MS (default 60000).
+// (default https://audiolab.tools/v1, must be https), AUDIOLAB_TIMEOUT_MS (default 330000).
 // Smoke test (no network): node hosted-server.mjs --selftest
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -52,7 +52,10 @@ const apiBase = () => {
   return base;
 };
 
-const timeoutMs = () => Number(process.env.AUDIOLAB_TIMEOUT_MS) || 60_000;
+// Just above the API's own 300 s ceiling: since long files stream server-side
+// (a 25-min track ≈ 10-30 s, batches of them add up), a 60 s client default
+// made the client give up while the server was still happily working.
+const timeoutMs = () => Number(process.env.AUDIOLAB_TIMEOUT_MS) || 330_000;
 
 function requireKey(key) {
   const k = key || process.env.AUDIOLAB_API_KEY;
