@@ -1,16 +1,16 @@
 #!/usr/bin/env node
-// AudioLab HOSTED-mode MCP server. Exposes the 9 AudioLab tools to any MCP-capable
+// AudioLab HOSTED-mode MCP server. Exposes the 10 AudioLab tools to any MCP-capable
 // AI (Claude Desktop / Claude Code, Cursor, etc.) by calling the hosted API at
 // audiolab.tools/v1/*. It contains NO engine code, just HTTP calls, so it is safe to
 // distribute publicly without exposing the proprietary engine.
 //
 // Two consumers share buildServer():
 //   1. This file run directly = a stdio server (the npm package @audiolabtools/mcp-server),
-//      reading the key from AUDIOLAB_API_KEY. Started with { local: true } — so it can also
+//      reading the key from AUDIOLAB_API_KEY. Started with { local: true }, so it can also
 //      analyse a LOCAL file via `{ path }` (small files POST raw; larger files are PUT to
 //      storage via a signed URL and analysed by objectPath). Nothing is exposed publicly.
 //   2. api/mcp.mjs = the remote streamable-HTTP endpoint at /mcp, which passes the
-//      per-request Bearer key via buildServer({ apiKey }). local defaults to FALSE there —
+//      per-request Bearer key via buildServer({ apiKey }). local defaults to FALSE there,
 //      a remote server must NEVER read a path off its own filesystem, so `{ path }` is
 //      rejected and only `{ url }` is accepted.
 //
@@ -36,11 +36,21 @@ import { z } from 'zod';
 // package.json" comment next to it. It drifted anyway: the package shipped 0.3.1
 // while every initialize response still announced 0.3.0. Read it instead, so the
 // comment cannot be ignored and the two cannot disagree.
-const { version: PKG_VERSION } = createRequire(import.meta.url)('./package.json');
+// ponytail: the npm package always ships package.json, the Vercel bundle of api/mcp.mjs
+// never does (includeFiles skips it too). A throw here took the remote /mcp down at load
+// time from 11 Aug to 14 Sep, so the hosted copy reports 'hosted' instead of crashing.
+const PKG_VERSION = (() => {
+  try { return createRequire(import.meta.url)('./package.json').version; } catch { return 'hosted'; }
+})();
 
 // Vercel serverless caps a raw request body at ~4.5 MB, so small files POST directly and
 // larger ones go through the signed-URL storage flow. The bucket policy caps at 50 MB.
 const RAW_MAX = 4 * 1024 * 1024;
+// Dit bestand is het ENIGE dat npm meestuurt, dus het mag niets buiten zijn eigen map
+// importeren. `MAX_STORAGE_BYTES` uit ../lib/limits.mjs stond hier even, en daarmee
+// crashte het gepubliceerde pakket bij de eerste import: die map wordt niet meegeleverd.
+// De waarde staat daarom weer hier, en de zelfcheck hieronder houdt hem tegen limits.mjs aan
+// zolang die bereikbaar is, dus in de monorepo faalt drift alsnog.
 const STORAGE_MAX = 50 * 1024 * 1024;
 
 // Read env at CALL time (not module load) so the key can be injected by the MCP host
@@ -199,7 +209,7 @@ const wrap = (fn) => async (input) => {
 const sourceShape = (local) => local
   ? {
       url: z.string().url().optional().describe('Public https URL to the audio file. Provide exactly one of url or path.'),
-      path: z.string().optional().describe('Path to a LOCAL audio file on this machine — analysed without hosting it publicly (files up to 4 MB are sent inline; larger ones up to 50 MB upload over a one-shot signed URL). Provide exactly one of url or path.'),
+      path: z.string().optional().describe('Path to a LOCAL audio file on this machine, analysed without hosting it publicly (files up to 4 MB are sent inline; larger ones up to 50 MB upload over a one-shot signed URL). Provide exactly one of url or path.'),
     }
   : { url: z.string().url().describe('Public https URL to the audio file.') };
 
@@ -230,7 +240,7 @@ export function buildServer({ apiKey, local = false } = {}) {
 
   tool('get_spectrum', {
     title: 'FFT spectrum data',
-    description: 'Frequency-domain magnitude data (paired frequency/magnitude arrays) plus energies in 7 standard bands (sub/bass/lowMid/mid/highMid/presence/air) and the dominant band. For spectrum-analyzer UIs and tonal-balance analysis.' + srcDoc,
+    description: 'Frequency-domain magnitude data (paired frequency/magnitude arrays) plus energies in 7 standard bands (sub/bass/lowMid/mid/highMid/presence/air). There is no dominant-band field in the response. For spectrum-analyzer UIs and tonal-balance analysis.' + srcDoc,
     inputSchema: src,
   }, wrap((i) => analyzeSource('mixlab/spectrum', i, {}, apiKey, local)));
 
@@ -250,9 +260,37 @@ export function buildServer({ apiKey, local = false } = {}) {
     title: 'Index a signal (SignalLab)',
     description: 'A metadata index for any audio file: content-type guess (voice/music/mixed/noise/silence) with confidence, brightness & dynamics buckets, dominant band, clipping/silence regions, and tag suggestions. For triage or auto-tagging a library.' + srcDoc,
     inputSchema: src,
-  }, wrap((i) => analyzeSource('signallab/index', i, {}, apiKey, local)));
+  }, wrap((i) => analyzeSource('signallab', i, {}, apiKey, local)));
 
-  // compare_loudness — two independent sources, each a url or (local only) a path.
+  // analyze_profile: the lens registry as one tool. A model that knows what it
+  // is looking for names the question, not forty field names; a model that does
+  // not can read the profiles here and pick one.
+  tool('analyze_profile', {
+    title: 'Analyse against a profile',
+    description:
+      'Measure a file against a named working set of lenses and get back only what that question needs. '
+      + 'Profiles: voice (is this take usable, and which phrase is the problem), '
+      + 'master (will this translate to real platforms and speakers), '
+      + 'provenance (what has been done to this file, and is it all one source), '
+      + 'dataset (which of these files are good enough, and why not the rest), '
+      + 'environment (what is in this space, and what kind of noise is it), '
+      + 'broadcast (does this file meet the delivery spec), '
+      + 'loop (is this loop clean, on the grid, and safe to drop in a DAW). '
+      + 'basic is the free tier; the other seven need a paid plan. '
+      + 'Results are keyed by stable lens id. Only the analysis passes the profile needs are run. '
+      + 'Set series:true to also get the curves, the per-block lanes and the per-phrase values,'
+      + 'a much larger payload, so leave it off unless you are going to read them.'
+      + srcDoc,
+    inputSchema: {
+      ...src,
+      profile: z.enum(['basic', 'voice', 'master', 'provenance', 'dataset', 'environment', 'broadcast', 'loop'])
+        .describe('Which question to answer.'),
+      series: z.boolean().optional()
+        .describe('Include time series, per-block lanes and per-phrase arrays. Off by default.'),
+    },
+  }, wrap((i) => analyzeSource('analyze/profile', i, { profile: i.profile, series: i.series === true }, apiKey, local)));
+
+  // compare_loudness: two independent sources, each a url or (local only) a path.
   const cmp = local
     ? {
         urlA: z.string().url().optional().describe('First source URL (e.g. master). Provide urlA or pathA.'),
@@ -276,7 +314,7 @@ export function buildServer({ apiKey, local = false } = {}) {
     return { a, b };
   }));
 
-  // analyze_batch — one route over many sources, a single metered-per-item call.
+  // analyze_batch: one route over many sources, a single metered-per-item call.
   const batchSrc = local
     ? {
         urls: z.array(z.string().url()).optional().describe('Public https URLs to audio files. Combined max 20 items with paths.'),
@@ -304,9 +342,9 @@ const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv
 
 if (isMain && process.argv.includes('--selftest')) {
   const assert = (await import('node:assert/strict')).default;
-  const expected = ['analyze_batch', 'analyze_loudness', 'analyze_timeseries', 'analyze_voice', 'check_target', 'compare_loudness', 'get_spectrum', 'get_speech_segments', 'index_signal'];
-  assert.deepEqual(buildServer().toolNames.slice().sort(), expected, 'nine hosted tools (remote / url-only)');
-  assert.deepEqual(buildServer({ local: true }).toolNames.slice().sort(), expected, 'nine hosted tools (local / url+path)');
+  const expected = ['analyze_batch', 'analyze_loudness', 'analyze_profile', 'analyze_timeseries', 'analyze_voice', 'check_target', 'compare_loudness', 'get_spectrum', 'get_speech_segments', 'index_signal'];
+  assert.deepEqual(buildServer().toolNames.slice().sort(), expected, 'ten hosted tools (remote / url-only)');
+  assert.deepEqual(buildServer({ local: true }).toolNames.slice().sort(), expected, 'ten hosted tools (local / url+path)');
 
   const prev = process.env.AUDIOLAB_API_KEY;
   delete process.env.AUDIOLAB_API_KEY;
@@ -329,7 +367,17 @@ if (isMain && process.argv.includes('--selftest')) {
   assert.equal(typeof PKG_VERSION, 'string', 'version resolves from package.json');
   assert.match(PKG_VERSION, /^\d+\.\d+\.\d+/, 'version looks like a semver');
 
-  console.log(`selftest ok · v${PKG_VERSION} · 9 tools (incl. analyze_batch) + missing-key guard + remote-path refusals + batch guards`);
+  // De opslaggrens staat hier hardgecodeerd omdat het pakket zichzelf moet kunnen draaien.
+  // In de monorepo is limits.mjs er wel, en dan moet hij gelijk zijn; in het gepubliceerde
+  // pakket ontbreekt hij en slaan we over. Zo kan de waarde niet stil uit elkaar lopen.
+  try {
+    const { MAX_STORAGE_BYTES } = await import('../lib/limits.mjs');
+    assert.equal(STORAGE_MAX, MAX_STORAGE_BYTES, 'STORAGE_MAX loopt uit de pas met lib/limits.mjs');
+  } catch (e) {
+    if (e?.code !== 'ERR_MODULE_NOT_FOUND') throw e;
+  }
+
+  console.log(`selftest ok · v${PKG_VERSION} · ${expected.length} tools (incl. analyze_profile) + missing-key guard + remote-path refusals + batch guards`);
   process.exit(0);
 }
 
