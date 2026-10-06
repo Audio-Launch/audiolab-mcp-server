@@ -38,8 +38,8 @@ Every tool takes **one audio source**: a public `url` **or** a local `path`:
 
 - `{ url: "https://…" }`: a public https URL the API fetches server-side.
 - `{ path: "./mix.wav" }`: a file on the machine running this server. Files up to **4 MB**
-  are sent inline; larger files (up to **50 MB**) upload over a one-shot signed URL, are
-  analysed, and are then deleted. *(Local `path` works only in this stdio server, not the
+  are sent inline; larger files (up to **150 MB**) upload over a signed URL, are analysed, and
+  are swept from storage within the hour. *(Local `path` works only in this stdio server, not the
   remote `/mcp` endpoint.)*
 
 | Tool | Returns |
@@ -48,7 +48,7 @@ Every tool takes **one audio source**: a public `url` **or** a local `path`:
 | `check_target` | Pass/fail vs a delivery target (`spotify` / `apple-music` / `youtube` / `tidal` / `amazon-music` / `podcast` / `ebu-broadcast` / `atsc-broadcast`, or `target:"custom"` + `lufs`+`tp`), with per-metric deltas and an ffmpeg loudnorm fix command |
 | `analyze_timeseries` | Short-term LUFS over time + downsampled waveform peaks (`waveformPoints?`) |
 | `get_spectrum` | FFT magnitude data + 7-band energies |
-| `analyze_voice` | Voice QA: speech/silence ratio, speaking rate, SNR, noise floor, room echo, sibilance & clipping risk |
+| `analyze_voice` | Voice QA: speech/silence ratio, speaking rate, SNR, noise floor, pause energy, sibilance & clipping risk |
 | `get_speech_segments` | Voiced regions with start/end + per-segment RMS (auto-trim, chapters) |
 | `index_signal` | Content-type guess, tags, clipping/silence regions, brightness & dynamics buckets |
 | `analyze_profile` | One named question, `voice`, `master`, `provenance`, `dataset`, `environment`, `broadcast` or `loop`, answered with only the lenses it needs. These seven need a paid plan; the free tier gets the `basic` profile, keyed by stable lens id. Add `series:true` for the curves, per-block lanes and per-phrase values. Carries a `note` when the profile’s voice lenses land on non-speech material. Full catalogue: <https://audiolab.tools/lenses> |
@@ -82,7 +82,7 @@ machine, don't use a hosted analyser.
 
 ## Limits
 
-- Local files: up to **50 MB** (host bigger ones at a public URL).
+- Local files: up to **150 MB** (host bigger ones at a public URL).
 - Duration: loudness routes (`analyze_loudness`, `check_target`, `analyze_timeseries`, `get_spectrum`) handle **long files** (podcast episodes, full sets, up to ~3 h) via server-side streaming; voice/signal routes are limited to ~7 minutes.
 - One file per call (agents loop for many); one-shot (no streaming/realtime).
 - Rate and monthly limits are enforced by the API, per key.

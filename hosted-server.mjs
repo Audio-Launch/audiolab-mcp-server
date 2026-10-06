@@ -44,14 +44,14 @@ const PKG_VERSION = (() => {
 })();
 
 // Vercel serverless caps a raw request body at ~4.5 MB, so small files POST directly and
-// larger ones go through the signed-URL storage flow. The bucket policy caps at 50 MB.
+// larger ones go through the signed-URL storage flow. The bucket policy caps at 150 MB.
 const RAW_MAX = 4 * 1024 * 1024;
 // Dit bestand is het ENIGE dat npm meestuurt, dus het mag niets buiten zijn eigen map
 // importeren. `MAX_STORAGE_BYTES` uit ../lib/limits.mjs stond hier even, en daarmee
 // crashte het gepubliceerde pakket bij de eerste import: die map wordt niet meegeleverd.
 // De waarde staat daarom weer hier, en de zelfcheck hieronder houdt hem tegen limits.mjs aan
 // zolang die bereikbaar is, dus in de monorepo faalt drift alsnog.
-const STORAGE_MAX = 50 * 1024 * 1024;
+const STORAGE_MAX = 150 * 1024 * 1024;
 
 // Read env at CALL time (not module load) so the key can be injected by the MCP host
 // and so the missing-key guard is testable.
@@ -209,7 +209,7 @@ const wrap = (fn) => async (input) => {
 const sourceShape = (local) => local
   ? {
       url: z.string().url().optional().describe('Public https URL to the audio file. Provide exactly one of url or path.'),
-      path: z.string().optional().describe('Path to a LOCAL audio file on this machine, analysed without hosting it publicly (files up to 4 MB are sent inline; larger ones up to 50 MB upload over a one-shot signed URL). Provide exactly one of url or path.'),
+      path: z.string().optional().describe('Path to a LOCAL audio file on this machine, analysed without hosting it publicly (files up to 4 MB are sent inline; larger ones up to 150 MB upload over a signed URL). Provide exactly one of url or path.'),
     }
   : { url: z.string().url().describe('Public https URL to the audio file.') };
 
@@ -246,7 +246,7 @@ export function buildServer({ apiKey, local = false } = {}) {
 
   tool('analyze_voice', {
     title: 'Analyze voice quality (VoiceLab)',
-    description: 'Speech-quality QA for a voice recording: speech/silence ratio, speaking-rate label, signal-to-noise, noise floor, room-echo label, sibilance risk, clipping severity. Gates a voice take.' + srcDoc,
+    description: 'Speech-quality QA for a voice recording: speech/silence ratio, speaking-rate label, signal-to-noise, noise floor, pause energy, sibilance risk, clipping severity. Gates a voice take.' + srcDoc,
     inputSchema: src,
   }, wrap((i) => analyzeSource('voicelab/qa', i, {}, apiKey, local)));
 
