@@ -31,6 +31,7 @@ import { basename } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { z } from 'zod';
+import { withDocs } from './error-docs.mjs';
 
 // The version reported over MCP used to be a literal with a "keep in sync with
 // package.json" comment next to it. It drifted anyway: the package shipped 0.3.1
@@ -91,7 +92,11 @@ async function request(url, { method = 'POST', headers = {}, body } = {}) {
   let json;
   try { json = JSON.parse(text); }
   catch { throw new Error(res.ok ? 'AudioLab API returned a non-JSON response.' : `AudioLab API error ${res.status}.`); }
-  if (!res.ok) throw new Error(String(json?.error?.message || json?.error || `API returned ${res.status}`));
+  if (!res.ok) {
+    const err = new Error(String(json?.error?.message || json?.error || `API returned ${res.status}`));
+    if (json?.error?.code) err.code = json.error.code; // de vaste foutcode van de API; error-docs.mjs maakt er de Docs-regel van
+    throw err;
+  }
   return json;
 }
 
@@ -201,7 +206,7 @@ async function analyzeSource(route, { url, path } = {}, extra = {}, key, local =
 const asContent = (obj) => ({ content: [{ type: 'text', text: JSON.stringify(obj) }] });
 const wrap = (fn) => async (input) => {
   try { return asContent(await fn(input)); }
-  catch (e) { return { isError: true, content: [{ type: 'text', text: String(e?.message || e) }] }; }
+  catch (e) { return { isError: true, content: [{ type: 'text', text: withDocs(String(e?.message || e), e) }] }; }
 };
 
 // Input source shape. Remote (url-only) keeps the original required url; local adds an
@@ -209,7 +214,7 @@ const wrap = (fn) => async (input) => {
 const sourceShape = (local) => local
   ? {
       url: z.string().url().optional().describe('Public https URL to the audio file. Provide exactly one of url or path.'),
-      path: z.string().optional().describe('Path to a LOCAL audio file on this machine, analysed without hosting it publicly (files up to 4 MB are sent inline; larger ones up to 150 MB upload over a signed URL). Provide exactly one of url or path.'),
+      path: z.string().optional().describe('Path to a LOCAL audio file on this machine. It is read here and uploaded to the AudioLab API for measuring, so you do not need to host it publicly (files up to 4 MB go in the request body; larger ones, up to 150 MB, upload over a signed URL and are swept from storage within the hour). Provide exactly one of url or path.'),
     }
   : { url: z.string().url().describe('Public https URL to the audio file.') };
 
@@ -246,19 +251,19 @@ export function buildServer({ apiKey, local = false } = {}) {
 
   tool('analyze_voice', {
     title: 'Analyze voice quality (VoiceLab)',
-    description: 'Speech-quality QA for a voice recording: speech/silence ratio, speaking-rate label, signal-to-noise, noise floor, pause energy, sibilance risk, clipping severity. Gates a voice take.' + srcDoc,
+    description: 'Speech-quality QA for a voice recording: speech/silence ratio, speaking-rate label, signal-to-noise, noise floor, pause energy, sibilance risk, clipping severity. Gates a voice take. Status: levels, SNR, noise floor and clipping are validated against known signals; speaking rate, background scene and intelligibility are proxies, and the pause-energy field is not a reverb measure (https://audiolab.tools/lenses).' + srcDoc,
     inputSchema: src,
   }, wrap((i) => analyzeSource('voicelab/qa', i, {}, apiKey, local)));
 
   tool('get_speech_segments', {
     title: 'Speech segments (VoiceLab)',
-    description: 'List voiced speech regions with start/end timestamps and per-segment RMS. For auto-trim, chapter generation, and speaker-turn detection. RMS-based voice-activity detection, not speaker diarization.' + srcDoc,
+    description: 'List voiced speech regions with start/end timestamps and per-segment RMS. For auto-trim and chapter generation. RMS-based voice-activity detection: it finds where speech is, not who is speaking, and it does not detect speaker turns. Status: a proxy, the speech gate is not measured against labelled speech.' + srcDoc,
     inputSchema: src,
   }, wrap((i) => analyzeSource('voicelab/segments', i, {}, apiKey, local)));
 
   tool('index_signal', {
     title: 'Index a signal (SignalLab)',
-    description: 'A metadata index for any audio file: content-type guess (voice/music/mixed/noise/silence) with confidence, brightness & dynamics buckets, dominant band, clipping/silence regions, and tag suggestions. For triage or auto-tagging a library.' + srcDoc,
+    description: 'A metadata index for any audio file: content-type guess (voice/music/mixed/noise/silence) with confidence, brightness & dynamics buckets, a rough band label, clipping/silence regions, and tag suggestions. For triage or auto-tagging a library. Status: content type, regions and confidence come from a frame classifier that is a proxy, not validated on a labelled corpus of real recordings; the tags describe the signal only, never the speaker (https://audiolab.tools/lenses).' + srcDoc,
     inputSchema: src,
   }, wrap((i) => analyzeSource('signallab', i, {}, apiKey, local)));
 
@@ -275,20 +280,25 @@ export function buildServer({ apiKey, local = false } = {}) {
       + 'dataset (which of these files are good enough, and why not the rest), '
       + 'environment (what is in this space, and what kind of noise is it), '
       + 'broadcast (does this file meet the delivery spec), '
-      + 'loop (is this loop clean, on the grid, and safe to drop in a DAW). '
-      + 'basic is the free tier; the other seven need a paid plan. '
+      + 'loop (is this loop clean, on the grid, and safe to drop in a DAW), '
+      + 'room (how long does this room ring per octave band, and is there a flutter echo; needs a recording of one clap, a balloon pop, an impulse response or a sweep), '
+      + 'chain (did this recording lose packets on its way: gaps of digital silence), '
+      + 'pitch (where does this voice sit, how much does it move, how clean is it). '
+      + 'basic is the free tier; the other ten need a paid plan. '
       + 'Results are keyed by stable lens id. Only the analysis passes the profile needs are run. '
       + 'Set series:true to also get the curves, the per-block lanes and the per-phrase values,'
       + 'a much larger payload, so leave it off unless you are going to read them.'
       + srcDoc,
     inputSchema: {
       ...src,
-      profile: z.enum(['basic', 'voice', 'master', 'provenance', 'dataset', 'environment', 'broadcast', 'loop'])
+      profile: z.enum(['basic', 'voice', 'master', 'provenance', 'dataset', 'environment', 'broadcast', 'loop', 'room', 'chain', 'pitch'])
         .describe('Which question to answer.'),
       series: z.boolean().optional()
         .describe('Include time series, per-block lanes and per-phrase arrays. Off by default.'),
+      roomSource: z.enum(['clap', 'balloon', 'impulse', 'sweep']).optional()
+        .describe('For the room profile: how the recording was made. clap (default): one clap; balloon: one pop; impulse: the file is an impulse response; sweep: the file holds the sweep of the engine as the room returned it.'),
     },
-  }, wrap((i) => analyzeSource('analyze/profile', i, { profile: i.profile, series: i.series === true }, apiKey, local)));
+  }, wrap((i) => analyzeSource('analyze/profile', i, { profile: i.profile, series: i.series === true, ...(i.roomSource ? { roomSource: i.roomSource } : {}) }, apiKey, local)));
 
   // compare_loudness: two independent sources, each a url or (local only) a path.
   const cmp = local
@@ -318,7 +328,7 @@ export function buildServer({ apiKey, local = false } = {}) {
   const batchSrc = local
     ? {
         urls: z.array(z.string().url()).optional().describe('Public https URLs to audio files. Combined max 20 items with paths.'),
-        paths: z.array(z.string()).optional().describe('LOCAL audio file paths; each uploads over a one-shot signed URL, is analysed, then deleted. Combined max 20 items with urls.'),
+        paths: z.array(z.string()).optional().describe('LOCAL audio file paths; each is read here and uploaded over a one-shot signed URL, measured by the API, and swept from storage within the hour. Combined max 20 items with urls.'),
       }
     : { urls: z.array(z.string().url()).min(1).max(20).describe('Public https URLs to audio files (max 20).') };
   tool('analyze_batch', {
@@ -349,6 +359,15 @@ if (isMain && process.argv.includes('--selftest')) {
   const prev = process.env.AUDIOLAB_API_KEY;
   delete process.env.AUDIOLAB_API_KEY;
   await assert.rejects(() => call('mixlab/analyze', { url: 'https://example.com/a.wav' }), /AUDIOLAB_API_KEY/, 'refuses without a key (before any fetch)');
+
+  // Elke fout die de gebruiker te zien krijgt draagt één regel Docs met een vaste code (mcp/error-docs.mjs; de uitleg staat op /docs/errors).
+  {
+    const { withDocs, codeFor } = await import('./error-docs.mjs');
+    assert.equal(withDocs('AUDIOLAB_API_KEY is not set.', new Error('AUDIOLAB_API_KEY is not set. Get a key at https://audiolab.tools/account.')), 'AUDIOLAB_API_KEY is not set.\nDocs: https://audiolab.tools/docs/errors#missing_api_key', 'de ontbrekende sleutel wijst naar zijn uitleg');
+    assert.equal(codeFor(Object.assign(new Error('x'), { code: 'quota_exceeded' })), 'quota_exceeded', 'de code van de API wint van de tekst');
+    assert.equal(codeFor(new Error('iets onverwachts')), 'analysis_error', 'onbekend valt terug op analysis_error');
+    assert.equal(codeFor(new Error('AudioLab API timed out after 5 ms.')), 'api_timeout');
+  }
 
   process.env.AUDIOLAB_API_KEY = 'al_live_selftest';
   // A remote server (local=false) must refuse a path BEFORE any filesystem read.

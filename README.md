@@ -8,8 +8,9 @@
 MCP ([Model Context Protocol](https://modelcontextprotocol.io)) server that gives any
 MCP-capable AI (Claude Desktop, Claude Code, Cursor, and others) ten audio-analysis
 tools, backed by the hosted **AudioLab** API. It is a thin HTTP client: **no local audio
-engine, no ffmpeg, nothing to compile.** It can analyse a **public URL** or a **local file**
-on your machine.
+engine, no ffmpeg, nothing to compile.** It can measure a **public URL** or a **local file**
+on your machine, but the measuring always happens on the hosted API: the file is read here
+and uploaded there (see [Privacy](#privacy)).
 
 ## Install
 
@@ -53,7 +54,7 @@ Every tool takes **one audio source**: a public `url` **or** a local `path`:
 | `analyze_voice` | Voice QA: speech/silence ratio, speaking rate, SNR, noise floor, pause energy, sibilance & clipping risk |
 | `get_speech_segments` | Voiced regions with start/end + per-segment RMS (auto-trim, chapters) |
 | `index_signal` | Content-type guess, tags, clipping/silence regions, brightness & dynamics buckets |
-| `analyze_profile` | One named question, `voice`, `master`, `provenance`, `dataset`, `environment`, `broadcast` or `loop`, answered with only the lenses it needs. These seven need a paid plan; the free tier gets the `basic` profile, keyed by stable lens id. Add `series:true` for the curves, per-block lanes and per-phrase values. Carries a `note` when the profile’s voice lenses land on non-speech material. Full catalogue: <https://audiolab.tools/lenses> |
+| `analyze_profile` | One named question, `voice`, `master`, `provenance`, `dataset`, `environment`, `broadcast`, `loop`, `room` (reverberation from a clap, a pop, an impulse response or a sweep; pass `roomSource`), `chain` (lost packets) or `pitch` (where a voice sits and how clean it is), answered with only the lenses it needs. These ten need a paid plan; the free tier gets the `basic` profile, keyed by stable lens id. Add `series:true` for the curves, per-block lanes and per-phrase values. Carries a `note` when the profile’s voice lenses land on non-speech material. Full catalogue: <https://audiolab.tools/lenses> |
 | `compare_loudness` | A/B on two sources (`urlA`/`pathA` + `urlB`/`pathB`), returns both results |
 | `analyze_batch` | One route over up to 20 sources in a single call (`urls` and/or `paths`), per-item ok/data/error. For folder QA, library indexing, or checking a whole release against a target. Each item meters as one call |
 
@@ -76,11 +77,15 @@ Example asks to your AI:
 ## Privacy
 
 Analysis happens on the AudioLab API, so the audio **does reach `audiolab.tools`**: a `url`
-is fetched server-side, and a local `path` is sent to the API (small files inline; larger
-files via a private one-shot signed upload that is deleted right after analysis). The API
-returns **numbers only** and does not retain your audio (see https://audiolab.tools/privacy).
-This package has no telemetry and writes nothing to disk. If audio must never leave the
-machine, don't use a hosted analyser.
+is fetched server-side, and a local `path` is read here and uploaded to the API (small
+files in the request body; larger files via a private one-shot signed upload into EU
+storage). The API returns **numbers only** and does not keep your audio: a direct request
+is decoded and discarded inside the request, and a signed upload is swept from storage
+within the hour (see https://audiolab.tools/privacy). This package has no telemetry and
+writes nothing to disk. There is no offline mode, and the engine is not published as an
+installable package. If audio must never leave the machine, don't use a hosted analyser;
+the in-browser labs on the website measure on-device, but they are for people, not for
+agents.
 
 ## Limits
 
