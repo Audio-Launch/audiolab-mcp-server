@@ -3,6 +3,8 @@
 
 # @audiolabtools/mcp-server
 
+[![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/audio-launch/audiolab-mcp-server)
+
 MCP ([Model Context Protocol](https://modelcontextprotocol.io)) server that gives any
 MCP-capable AI (Claude Desktop, Claude Code, Cursor, and others) ten audio-analysis
 tools, backed by the hosted **AudioLab** API. It is a thin HTTP client: **no local audio
