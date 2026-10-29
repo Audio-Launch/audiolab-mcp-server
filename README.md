@@ -14,26 +14,33 @@ and uploaded there (see [Privacy](#privacy)).
 
 ## Install
 
-Point your MCP client at the package via `npx` (nothing to install globally):
+Point your MCP client at the package via `npx` (nothing to install globally). No account
+needed for a first score:
 
 ```json
 {
   "mcpServers": {
     "audiolab": {
       "command": "npx",
-      "args": ["-y", "@audiolabtools/mcp-server"],
-      "env": { "AUDIOLAB_API_KEY": "al_live_yourkey" }
+      "args": ["-y", "@audiolabtools/mcp-server"]
     }
   }
 }
 ```
 
-Get a key: sign in at **https://audiolab.tools/account** and generate one (free tier available).
+Without a key you are on the **keyless trial**: 20 calls a month and 3 a minute per IP address,
+for single analyses of a URL or a local file up to 4 MB. Batches and larger files need a key.
+A free key gives 1,000 calls and 2 GB a month, no card: sign in at **https://audiolab.tools/account**,
+generate one, and add it:
+
+```json
+"env": { "AUDIOLAB_API_KEY": "al_live_yourkey" }
+```
 
 ## Requirements
 
 - **Node ≥ 18**: uses the built-in global `fetch` + `AbortSignal.timeout`.
-- An `AUDIOLAB_API_KEY`. No ffmpeg, no native dependencies.
+- Optionally an `AUDIOLAB_API_KEY` (see Install). No ffmpeg, no native dependencies.
 
 ## Tools
 
@@ -70,7 +77,7 @@ Example asks to your AI:
 
 | Var | Default | Purpose |
 |---|---|---|
-| `AUDIOLAB_API_KEY` | – (required) | Your API key. |
+| `AUDIOLAB_API_KEY` | – (optional) | Your API key. Without it: the keyless trial (20 calls a month per IP, no batches, files up to 4 MB). |
 | `AUDIOLAB_API_BASE` | `https://audiolab.tools/v1` | Override the API base (must be `https://`). |
 | `AUDIOLAB_TIMEOUT_MS` | `330000` | Per-request timeout in milliseconds (long files and batches stream server-side and can legitimately take minutes). |
 
@@ -92,7 +99,7 @@ agents.
 - Local files: up to **150 MB** (host bigger ones at a public URL).
 - Duration: loudness routes (`analyze_loudness`, `check_target`, `analyze_timeseries`, `get_spectrum`) handle **long files** (podcast episodes, full sets, up to ~3 h) via server-side streaming; voice/signal routes are limited to ~7 minutes.
 - One file per call (agents loop for many); one-shot (no streaming/realtime).
-- Rate and monthly limits are enforced by the API, per key.
+- Rate and monthly limits are enforced by the API, per key (per IP address on the keyless trial).
 
 ## Smoke test
 

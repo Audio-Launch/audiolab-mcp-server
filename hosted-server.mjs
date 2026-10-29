@@ -14,13 +14,16 @@
 //      a remote server must NEVER read a path off its own filesystem, so `{ path }` is
 //      rejected and only `{ url }` is accepted.
 //
-// Requires an API key (self-serve: sign in at https://audiolab.tools/account and generate one).
+// Works without a key since 0.5.0 (27 Oct 2026): single analyses of a URL or a local file up to 4 MB go out
+// without an Authorization header and land on the API's keyless trial (20 calls a month, 3 a minute, per IP),
+// the same as a curl without a key. Batches and larger files need a key, because /v1/batch and the storage
+// upload are tied to one. A free key (sign in at https://audiolab.tools/account) gives 1,000 calls a month.
 // Config in Claude Desktop's claude_desktop_config.json:
 //   { "mcpServers": { "audiolab": {
 //       "command": "npx", "args": ["-y", "@audiolabtools/mcp-server"],
 //       "env": { "AUDIOLAB_API_KEY": "al_live_yourkey" } } } }
 //
-// Env: AUDIOLAB_API_KEY (required at call time for stdio mode), AUDIOLAB_API_BASE
+// Env: AUDIOLAB_API_KEY (optional in stdio mode, see above), AUDIOLAB_API_BASE
 // (default https://audiolab.tools/v1, must be https), AUDIOLAB_TIMEOUT_MS (default 330000).
 // Smoke test (no network): node hosted-server.mjs --selftest
 
@@ -68,9 +71,15 @@ const apiBase = () => {
 // made the client give up while the server was still happily working.
 const timeoutMs = () => Number(process.env.AUDIOLAB_TIMEOUT_MS) || 330_000;
 
-function requireKey(key) {
-  const k = key || process.env.AUDIOLAB_API_KEY;
-  if (!k) throw new Error('AUDIOLAB_API_KEY is not set. Get a key at https://audiolab.tools/account.');
+// The key if there is one. Without one, single analyses go to the keyless trial; the remote /mcp endpoint
+// always passes a key (api/mcp.mjs refuses a request without one before it gets here).
+const keyOf = (key) => key || process.env.AUDIOLAB_API_KEY || null;
+const auth = (k) => (k ? { authorization: `Bearer ${k}` } : {});
+
+// Batches and the storage upload are tied to a key server-side, so these refuse before any network call.
+function requireKey(key, what) {
+  const k = keyOf(key);
+  if (!k) throw new Error(`AUDIOLAB_API_KEY is not set. ${what} need a key; a free one gives 1,000 calls a month: https://audiolab.tools/account. Single files up to 4 MB and URLs work without one.`);
   return k;
 }
 
@@ -102,9 +111,8 @@ async function request(url, { method = 'POST', headers = {}, body } = {}) {
 
 // key defaults to the env var (stdio mode); the remote endpoint passes a per-request key.
 export async function call(route, body, key = process.env.AUDIOLAB_API_KEY) {
-  const k = requireKey(key);
   return request(`${apiBase()}/${route}`, {
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${k}` },
+    headers: { 'content-type': 'application/json', ...auth(keyOf(key)) },
     body: JSON.stringify(body),
   });
 }
@@ -112,12 +120,11 @@ export async function call(route, body, key = process.env.AUDIOLAB_API_KEY) {
 // Small local file → raw audio body straight to /v1 (fast, no storage round-trip).
 // Tool extras (target/lufs/tp/waveformPoints/fileName) ride along as query params.
 async function postRaw(route, buf, ct, extra, key) {
-  const k = requireKey(key);
   const qs = new URLSearchParams();
   for (const [name, v] of Object.entries(extra || {})) if (v !== undefined && v !== null && v !== '') qs.set(name, String(v));
   const q = qs.toString();
   return request(`${apiBase()}/${route}${q ? `?${q}` : ''}`, {
-    headers: { 'content-type': ct, authorization: `Bearer ${k}` },
+    headers: { 'content-type': ct, ...auth(keyOf(key)) },
     body: buf,
   });
 }
@@ -125,7 +132,7 @@ async function postRaw(route, buf, ct, extra, key) {
 // Mint a signed upload URL and PUT the bytes to storage; returns the objectPath.
 // The objectPath is namespaced to this key server-side; only this key can read it.
 async function uploadToStorage(buf, ct, key) {
-  const k = requireKey(key);
+  const k = requireKey(key, 'Files over 4 MB');
   const origin = new URL(apiBase()).origin;
   const mint = await request(`${origin}/api/upload-url`, {
     headers: { 'content-type': 'application/json', authorization: `Bearer ${k}` },
@@ -169,6 +176,7 @@ async function batchSources({ urls = [], paths = [] }, endpoint, extra, key, loc
   const total = urls.length + paths.length;
   if (!total) throw new Error('Provide urls (public https) and/or paths (local files).');
   if (total > BATCH_MAX) throw new Error(`Batch too large: max ${BATCH_MAX} items per call. Split into smaller batches.`);
+  requireKey(key, 'Batches');
   const objectPaths = [];
   for (const p of paths) {
     const buf = await readLocal(p);
@@ -358,7 +366,21 @@ if (isMain && process.argv.includes('--selftest')) {
 
   const prev = process.env.AUDIOLAB_API_KEY;
   delete process.env.AUDIOLAB_API_KEY;
-  await assert.rejects(() => call('mixlab/analyze', { url: 'https://example.com/a.wav' }), /AUDIOLAB_API_KEY/, 'refuses without a key (before any fetch)');
+  // Without a key: a single analysis goes out with no Authorization header (the keyless trial); a batch refuses before any fetch.
+  {
+    const realFetch = globalThis.fetch;
+    let sent;
+    globalThis.fetch = async (_url, init) => { sent = init.headers; return new Response('{"ok":true}', { status: 200 }); };
+    try {
+      await call('mixlab/analyze', { url: 'https://example.com/a.wav' });
+      assert.ok(sent && !('authorization' in sent), 'keyless call sends no Authorization header');
+      await call('mixlab/analyze', { url: 'https://example.com/a.wav' }, 'al_live_selftest');
+      assert.equal(sent.authorization, 'Bearer al_live_selftest', 'a key still goes out as Bearer');
+      sent = undefined;
+      await assert.rejects(() => batchSources({ urls: ['https://example.com/a.wav'] }, 'mixlab/analyze', {}, undefined, false), /AUDIOLAB_API_KEY is not set\. Batches need a key/, 'batch refuses without a key');
+      assert.equal(sent, undefined, 'the batch refusal happens before any fetch');
+    } finally { globalThis.fetch = realFetch; }
+  }
 
   // Elke fout die de gebruiker te zien krijgt draagt één regel Docs met een vaste code (mcp/error-docs.mjs; de uitleg staat op /docs/errors).
   {
@@ -396,7 +418,7 @@ if (isMain && process.argv.includes('--selftest')) {
     if (e?.code !== 'ERR_MODULE_NOT_FOUND') throw e;
   }
 
-  console.log(`selftest ok · v${PKG_VERSION} · ${expected.length} tools (incl. analyze_profile) + missing-key guard + remote-path refusals + batch guards`);
+  console.log(`selftest ok · v${PKG_VERSION} · ${expected.length} tools (incl. analyze_profile) + keyless trial and batch-key guard + remote-path refusals + batch guards`);
   process.exit(0);
 }
 

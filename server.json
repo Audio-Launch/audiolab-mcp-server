@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "tools.audiolab/audiolab",
   "description": "Loudness, true-peak and voice-quality analysis of URLs and local files via the hosted AudioLab API.",
-  "version": "0.4.5",
+  "version": "0.5.0",
   "repository": {
     "url": "https://github.com/Audio-Launch/audiolab-mcp-server",
     "source": "github"
@@ -12,15 +12,15 @@
     {
       "registryType": "npm",
       "identifier": "@audiolabtools/mcp-server",
-      "version": "0.4.5",
+      "version": "0.5.0",
       "transport": {
         "type": "stdio"
       },
       "environmentVariables": [
         {
           "name": "AUDIOLAB_API_KEY",
-          "description": "API key from https://audiolab.tools/account. Free tier: 1,000 calls and 2 GB per month, no card.",
-          "isRequired": true,
+          "description": "Optional. Without it: the keyless trial, 20 calls a month per IP, single files up to 4 MB, no batches. A free key from https://audiolab.tools/account gives 1,000 calls and 2 GB per month, no card.",
+          "isRequired": false,
           "isSecret": true
         },
         {
