@@ -6,7 +6,7 @@
 export const DOCS_ERRORS_URL = 'https://audiolab.tools/docs/errors';
 
 export const KNOWN_CODES = [
-  'invalid_api_key', 'rate_limited', 'quota_exceeded', 'data_quota_exceeded', 'profile_requires_paid_plan', 'file_too_large', 'track_too_long', 'unsupported_format', 'room_not_measurable',
+  'invalid_api_key', 'rate_limited', 'quota_exceeded', 'data_quota_exceeded', 'profile_requires_paid_plan', 'file_too_large', 'track_too_long', 'unsupported_format', 'room_not_measurable', 'incomplete_file',
   'url_not_allowed', 'url_fetch_failed', 'invalid_json', 'missing_input', 'invalid_parameter', 'batch_too_large', 'upload_not_found', 'unknown_endpoint', 'method_not_allowed',
   'storage_unavailable', 'analysis_error', 'missing_api_key', 'api_timeout', 'api_unreachable', 'voice_minutes_exhausted', 'service_paused', 'invalid_input',
 ];

@@ -271,9 +271,12 @@ export function buildServer({ apiKey, local = false } = {}) {
 
   tool('index_signal', {
     title: 'Index a signal (SignalLab)',
-    description: 'A metadata index for any audio file: content-type guess (voice/music/mixed/noise/silence) with confidence, brightness & dynamics buckets, a rough band label, clipping/silence regions, and tag suggestions. For triage or auto-tagging a library. Status: content type, regions and confidence come from a frame classifier that is a proxy, not validated on a labelled corpus of real recordings; the tags describe the signal only, never the speaker (https://audiolab.tools/lenses).' + srcDoc,
-    inputSchema: src,
-  }, wrap((i) => analyzeSource('signallab', i, {}, apiKey, local)));
+    description: 'A metadata index for any audio file: content-type guess (voice/music/mixed/noise/silence) with confidence, brightness & dynamics buckets, a rough band label, clipping/silence regions, and tag suggestions. For triage or auto-tagging a library. Status: content type, regions and confidence come from a frame classifier that is a proxy, not validated on a labelled corpus of real recordings; the tags describe the signal only, never the speaker (https://audiolab.tools/lenses). Set bandLimit:true to ask whether the audio was upsampled: bandLimit.upsampled is yes, no or cannot-say, with the reason in plain words. yes rests on a validated rule (study UP-1: the band stops under 5 kHz in a file of 16 kHz or more, as after a telephone call); no and the bandwidth ratio are proxies (study UP-2); cannot-say means look at the file, not that it is fine.' + srcDoc,
+    inputSchema: {
+      ...src,
+      bandLimit: z.boolean().optional().describe('Also return bandLimit: whether the audio was upsampled (yes, no or cannot-say), its status, reason and basis. Off by default.'),
+    },
+  }, wrap((i) => analyzeSource('signallab', i, { bandLimit: i.bandLimit }, apiKey, local)));
 
   // analyze_profile: the lens registry as one tool. A model that knows what it
   // is looking for names the question, not forty field names; a model that does
@@ -348,8 +351,9 @@ export function buildServer({ apiKey, local = false } = {}) {
       target: z.string().optional().describe('For mixlab/check-target: preset id (spotify, ebu-broadcast, podcast, …) or "custom".'),
       lufs: z.number().optional().describe('For target="custom": integrated LUFS target.'),
       tp: z.number().optional().describe('For target="custom": max true-peak (dBTP).'),
+      bandLimit: z.boolean().optional().describe('For signallab/index: also return bandLimit per file, with upsampled yes, no or cannot-say (see index_signal).'),
     },
-  }, wrap((i) => batchSources({ urls: i.urls || [], paths: i.paths || [] }, i.endpoint || 'mixlab/analyze', { target: i.target, lufs: i.lufs, tp: i.tp }, apiKey, local)));
+  }, wrap((i) => batchSources({ urls: i.urls || [], paths: i.paths || [] }, i.endpoint || 'mixlab/analyze', { target: i.target, lufs: i.lufs, tp: i.tp, bandLimit: i.bandLimit }, apiKey, local)));
 
   return { server, toolNames };
 }

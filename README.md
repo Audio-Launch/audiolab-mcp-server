@@ -55,21 +55,22 @@ Every tool takes **one audio source**: a public `url` **or** a local `path`:
 | Tool | Returns |
 |---|---|
 | `analyze_loudness` | Integrated LUFS (EBU R128 / BS.1770-4), true-peak (dBTP), LRA, crest factor, stereo correlation, mono compatibility, tonal balance |
-| `check_target` | Pass/fail vs a delivery target (`spotify` / `apple-music` / `youtube` / `tidal` / `amazon-music` / `podcast` / `ebu-broadcast` / `atsc-broadcast`, or `target:"custom"` + `lufs`+`tp`), with per-metric deltas and an ffmpeg loudnorm fix command |
+| `check_target` | Pass/fail vs a delivery target (`spotify` / `apple-music` / `youtube` / `tidal` / `amazon-music` / `podcast` / `ebu-broadcast` / `atsc-broadcast`, or `target:"custom"` + `lufs`+`tp`), with per-metric deltas; passes within ±0.5 LU of the target with true peak at most 0.5 dB above it. On a fail it adds a single-pass ffmpeg loudnorm command as a starting point: measure the output again, single-pass can miss the margin |
 | `analyze_timeseries` | Short-term LUFS over time + downsampled waveform peaks (`waveformPoints?`) |
 | `get_spectrum` | FFT magnitude data + 7-band energies |
 | `analyze_voice` | Voice QA: speech/silence ratio, speaking rate, SNR, noise floor, pause energy, sibilance & clipping risk |
 | `get_speech_segments` | Voiced regions with start/end + per-segment RMS (auto-trim, chapters) |
-| `index_signal` | Content-type guess, tags, clipping/silence regions, brightness & dynamics buckets |
+| `index_signal` | Content-type guess, tags, clipping/silence regions, brightness & dynamics buckets. Add `bandLimit:true` for `bandLimit.upsampled`: `yes`, `no` or `cannot-say`, with the reason in plain words (guide: <https://audiolab.tools/docs/start/is-my-audio-upsampled>) |
 | `analyze_profile` | One named question, `voice`, `master`, `provenance`, `dataset`, `environment`, `broadcast`, `loop`, `room` (reverberation from a clap, a pop, an impulse response or a sweep; pass `roomSource`), `chain` (lost packets) or `pitch` (where a voice sits and how clean it is), answered with only the lenses it needs. These ten need a paid plan; the free tier gets the `basic` profile, keyed by stable lens id. Add `series:true` for the curves, per-block lanes and per-phrase values. Carries a `note` when the profile’s voice lenses land on non-speech material. Full catalogue: <https://audiolab.tools/lenses> |
 | `compare_loudness` | A/B on two sources (`urlA`/`pathA` + `urlB`/`pathB`), returns both results |
-| `analyze_batch` | One route over up to 20 sources in a single call (`urls` and/or `paths`), per-item ok/data/error. For folder QA, library indexing, or checking a whole release against a target. Each item meters as one call |
+| `analyze_batch` | One route over up to 20 sources in a single call (`urls` and/or `paths`), per-item ok/data/error. For folder QA, library indexing, or checking a whole release against a target; with `endpoint:"signallab/index"` it takes `bandLimit:true` too. Each item meters as one call |
 
 Example asks to your AI:
 
 - *“Analyze the loudness of https://example.com/track.wav”* → `analyze_loudness` with `url`
 - *“Is this take usable?”* → `analyze_profile` with `profile:"voice"`
 - *“Has this file been re-encoded, and is it all one source?”* → `analyze_profile` with `profile:"provenance"`
+- *“Which of these recordings were upsampled?”* → `analyze_batch` with `endpoint:"signallab/index"` and `bandLimit:true`
 - *“Run loudness on ./master.wav”* → `analyze_loudness` with `path`
 - *“Does ./mix.mp3 pass Spotify?”* → `check_target` with `path` + `target:"spotify"`
 
