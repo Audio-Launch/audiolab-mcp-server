@@ -298,7 +298,10 @@ export function buildServer({ apiKey, local = false } = {}) {
       + 'basic is the free tier; the other ten need a paid plan. '
       + 'Results are keyed by stable lens id. Only the analysis passes the profile needs are run. '
       + 'Set series:true to also get the curves, the per-block lanes and the per-phrase values,'
-      + 'a much larger payload, so leave it off unless you are going to read them.'
+      + 'a much larger payload, so leave it off unless you are going to read them. '
+      + 'Set liveEvents:true to also get liveEvents: the file read as a stream by the live monitor, with every dropout, clipping, level drop, dead air '
+      + 'and hum event, its times and its reason. Status signals: none of these detectors has been validated on live streams yet, so say "a signal", '
+      + 'never "detected". A dropout or clipping event names the file measure with its own rule (chain.dropoutCount, signal.clipping) and why the two can differ.'
       + srcDoc,
     inputSchema: {
       ...src,
@@ -308,8 +311,10 @@ export function buildServer({ apiKey, local = false } = {}) {
         .describe('Include time series, per-block lanes and per-phrase arrays. Off by default.'),
       roomSource: z.enum(['clap', 'balloon', 'impulse', 'sweep']).optional()
         .describe('For the room profile: how the recording was made. clap (default): one clap; balloon: one pop; impulse: the file is an impulse response; sweep: the file holds the sweep of the engine as the room returned it.'),
+      liveEvents: z.boolean().optional()
+        .describe('Also return liveEvents: the events of the live monitor over the whole file, status signals. Off by default.'),
     },
-  }, wrap((i) => analyzeSource('analyze/profile', i, { profile: i.profile, series: i.series === true, ...(i.roomSource ? { roomSource: i.roomSource } : {}) }, apiKey, local)));
+  }, wrap((i) => analyzeSource('analyze/profile', i, { profile: i.profile, series: i.series === true, ...(i.roomSource ? { roomSource: i.roomSource } : {}), ...(i.liveEvents ? { liveEvents: true } : {}) }, apiKey, local)));
 
   // compare_loudness: two independent sources, each a url or (local only) a path.
   const cmp = local
