@@ -192,8 +192,11 @@ async function batchSources({ urls = [], paths = [] }, endpoint, extra, key, loc
 
 // Resolve one audio source (url OR local path) to a route call. `local` gates path reads:
 // the remote /mcp endpoint passes local=false and must NEVER touch the server filesystem.
-async function analyzeSource(route, { url, path } = {}, extra = {}, key, local = false) {
+async function analyzeSource(route, { url, path, measureStatus, round } = {}, extra = {}, key, local = false) {
   if (url && path) throw new Error('Provide exactly one of url or path, not both.');
+  // on by default (0.5.3); routes without lenses (check-target, timeseries, spectrum, segments) ignore both
+  if (measureStatus !== false) extra = { ...extra, measureStatus: true };
+  if (round !== false) extra = { ...extra, round: true };
   if (path) {
     if (!local) throw new Error('Local file paths are only supported by the local (stdio) MCP server; use a public https url instead.');
     let buf;
@@ -226,6 +229,16 @@ const sourceShape = (local) => local
     }
   : { url: z.string().url().describe('Public https URL to the audio file.') };
 
+// measureStatus is on by default: an agent should not read a proxy or a withdrawn field as a fact.
+const MS_DOC = ' The answer carries measureStatus: per field its status (validated, proxy, beta, withdrawn), basis and margin where known. Report a proxy as an approximation, never present a withdrawn field as what its name says, and stay inside a stated margin (https://audiolab.tools/docs/start/read-a-response#the-five-statuses).';
+const msShape = { measureStatus: z.boolean().optional().describe('Add measureStatus to the answer: the status of each field. On by default; set false to leave it out.') };
+const roundShape = { round: z.boolean().optional().describe('Round numbers to what they are worth (dB and LUFS 2 decimals, seconds 3, ms 1, Hz 1, shares 3); same keys and types. On by default; set false for full precision.') };
+const scShape = { spectrumCalc: z.enum(['v1', 'v2']).optional().describe('Spectrum calculation: v1 (the default until 15 February 2027) or v2 (fixes three errors found against an independent calculation; values change a little, keys do not).') };
+const seriesShape = { series: z.boolean().optional().describe('Include the curves and per-block arrays (large payload). Off by default.') };
+const cmShape = { contentModel: z.enum(['v1', 'v2']).optional().describe('Content-type model: v1 (the default until 15 January 2027) or v2 (the newer small learned model).') };
+const sdShape = { speechDetector: z.enum(['v1', 'k2']).optional().describe('Speech detector: v1 (the default until 15 January 2027) or k2 (lets a phrase run on into its soft word starts and endings, at most 100 ms per side).') };
+const opt = (i, ...names) => Object.fromEntries(names.filter((n) => i[n] !== undefined).map((n) => [n, i[n]]));
+
 export function buildServer({ apiKey, local = false } = {}) {
   const server = new McpServer({ name: 'audiolab', version: PKG_VERSION });
   const toolNames = [];
@@ -235,9 +248,9 @@ export function buildServer({ apiKey, local = false } = {}) {
 
   tool('analyze_loudness', {
     title: 'Analyze loudness (MixLab)',
-    description: 'Loudness and dynamics for a track: integrated LUFS (EBU R128 / BS.1770-4), true-peak (dBTP), loudness range (LRA), crest factor, stereo correlation, mono compatibility, and tonal balance.' + srcDoc,
-    inputSchema: src,
-  }, wrap((i) => analyzeSource('mixlab/analyze', i, {}, apiKey, local)));
+    description: 'Loudness and dynamics for a track: integrated LUFS (EBU R128 / BS.1770-4), true-peak (dBTP), loudness range (LRA), crest factor, stereo correlation, mono compatibility, and tonal balance.' + MS_DOC + srcDoc,
+    inputSchema: { ...src, ...msShape, ...roundShape, ...seriesShape, ...scShape },
+  }, wrap((i) => analyzeSource('mixlab/analyze', i, opt(i, 'series', 'spectrumCalc'), apiKey, local)));
 
   tool('check_target', {
     title: 'Check audio against a loudness target (Spotify, EBU, etc.)',
@@ -254,29 +267,29 @@ export function buildServer({ apiKey, local = false } = {}) {
   tool('get_spectrum', {
     title: 'FFT spectrum data',
     description: 'Frequency-domain magnitude data (paired frequency/magnitude arrays) plus energies in 7 standard bands (sub/bass/lowMid/mid/highMid/presence/air). There is no dominant-band field in the response. For spectrum-analyzer UIs and tonal-balance analysis.' + srcDoc,
-    inputSchema: src,
-  }, wrap((i) => analyzeSource('mixlab/spectrum', i, {}, apiKey, local)));
+    inputSchema: { ...src, ...scShape },
+  }, wrap((i) => analyzeSource('mixlab/spectrum', i, opt(i, 'spectrumCalc'), apiKey, local)));
 
   tool('analyze_voice', {
     title: 'Analyze voice quality (VoiceLab)',
-    description: 'Speech-quality QA for a voice recording: speech/silence ratio, speaking-rate label, signal-to-noise, noise floor, pause energy, sibilance risk, clipping severity. Gates a voice take. Status: levels, SNR, noise floor and clipping are validated against known signals; speaking rate, background scene and intelligibility are proxies, and the pause-energy field is not a reverb measure (https://audiolab.tools/lenses).' + srcDoc,
-    inputSchema: src,
-  }, wrap((i) => analyzeSource('voicelab/qa', i, {}, apiKey, local)));
+    description: 'Speech-quality QA for a voice recording: speech/silence ratio, speaking-rate label, signal-to-noise, noise floor, pause energy, sibilance risk, clipping severity. Gates a voice take. Status: levels, SNR, noise floor and clipping are validated against known signals; speaking rate, background scene and intelligibility are proxies, and the pause-energy field is not a reverb measure (https://audiolab.tools/lenses).' + MS_DOC + srcDoc,
+    inputSchema: { ...src, ...msShape, ...roundShape, ...seriesShape, ...sdShape },
+  }, wrap((i) => analyzeSource('voicelab/qa', i, opt(i, 'speechDetector', 'series'), apiKey, local)));
 
   tool('get_speech_segments', {
     title: 'Speech segments (VoiceLab)',
     description: 'List voiced speech regions with start/end timestamps and per-segment RMS. For auto-trim and chapter generation. RMS-based voice-activity detection: it finds where speech is, not who is speaking, and it does not detect speaker turns. Status: a proxy, the speech gate is not measured against labelled speech.' + srcDoc,
-    inputSchema: src,
-  }, wrap((i) => analyzeSource('voicelab/segments', i, {}, apiKey, local)));
+    inputSchema: { ...src, ...sdShape },
+  }, wrap((i) => analyzeSource('voicelab/segments', i, opt(i, 'speechDetector'), apiKey, local)));
 
   tool('index_signal', {
     title: 'Index a signal (SignalLab)',
-    description: 'A metadata index for any audio file: content-type guess (voice/music/mixed/noise/silence) with confidence, brightness & dynamics buckets, a rough band label, clipping/silence regions, and tag suggestions. For triage or auto-tagging a library. Status: content type, regions and confidence come from a frame classifier that is a proxy, not validated on a labelled corpus of real recordings; the tags describe the signal only, never the speaker (https://audiolab.tools/lenses). Set bandLimit:true to ask whether the audio was upsampled: bandLimit.upsampled is yes, no or cannot-say, with the reason in plain words. yes rests on a validated rule (study UP-1: the band stops under 5 kHz in a file of 16 kHz or more, as after a telephone call); no and the bandwidth ratio are proxies (study UP-2); cannot-say means look at the file, not that it is fine.' + srcDoc,
+    description: 'A metadata index for any audio file: content-type guess (voice/music/mixed/noise/silence) with confidence, brightness & dynamics buckets, a rough band label, clipping/silence regions, and tag suggestions. For triage or auto-tagging a library. Status: content type, regions and confidence come from a frame classifier that is a proxy, not validated on a labelled corpus of real recordings; the tags describe the signal only, never the speaker (https://audiolab.tools/lenses). Set bandLimit:true to ask whether the audio was upsampled: bandLimit.upsampled is yes, no or cannot-say, with the reason in plain words. yes rests on a validated rule (study UP-1: the band stops under 5 kHz in a file of 16 kHz or more, as after a telephone call); no and the bandwidth ratio are proxies (study UP-2); cannot-say means look at the file, not that it is fine.' + MS_DOC + srcDoc,
     inputSchema: {
-      ...src,
+      ...src, ...msShape, ...roundShape, ...cmShape,
       bandLimit: z.boolean().optional().describe('Also return bandLimit: whether the audio was upsampled (yes, no or cannot-say), its status, reason and basis. Off by default.'),
     },
-  }, wrap((i) => analyzeSource('signallab', i, { bandLimit: i.bandLimit }, apiKey, local)));
+  }, wrap((i) => analyzeSource('signallab', i, { bandLimit: i.bandLimit, ...opt(i, 'contentModel') }, apiKey, local)));
 
   // analyze_profile: the lens registry as one tool. A model that knows what it
   // is looking for names the question, not forty field names; a model that does
@@ -302,9 +315,9 @@ export function buildServer({ apiKey, local = false } = {}) {
       + 'Set liveEvents:true to also get liveEvents: the file read as a stream by the live monitor, with every dropout, clipping, level drop, dead air '
       + 'and hum event, its times and its reason. Status signals: none of these detectors has been validated on live streams yet, so say "a signal", '
       + 'never "detected". A dropout or clipping event names the file measure with its own rule (chain.dropoutCount, signal.clipping) and why the two can differ.'
-      + srcDoc,
+      + MS_DOC + srcDoc,
     inputSchema: {
-      ...src,
+      ...src, ...msShape, ...roundShape, ...cmShape, ...sdShape, ...scShape,
       profile: z.enum(['basic', 'voice', 'master', 'provenance', 'dataset', 'environment', 'broadcast', 'loop', 'room', 'chain', 'pitch'])
         .describe('Which question to answer.'),
       series: z.boolean().optional()
@@ -314,7 +327,7 @@ export function buildServer({ apiKey, local = false } = {}) {
       liveEvents: z.boolean().optional()
         .describe('Also return liveEvents: the events of the live monitor over the whole file, status signals. Off by default.'),
     },
-  }, wrap((i) => analyzeSource('analyze/profile', i, { profile: i.profile, series: i.series === true, ...(i.roomSource ? { roomSource: i.roomSource } : {}), ...(i.liveEvents ? { liveEvents: true } : {}) }, apiKey, local)));
+  }, wrap((i) => analyzeSource('analyze/profile', i, { profile: i.profile, series: i.series === true, ...(i.roomSource ? { roomSource: i.roomSource } : {}), ...(i.liveEvents ? { liveEvents: true } : {}), ...opt(i, 'contentModel', 'speechDetector', 'spectrumCalc') }, apiKey, local)));
 
   // compare_loudness: two independent sources, each a url or (local only) a path.
   const cmp = local
@@ -330,12 +343,12 @@ export function buildServer({ apiKey, local = false } = {}) {
       };
   tool('compare_loudness', {
     title: 'Compare two tracks (A/B)',
-    description: 'Run loudness analysis on TWO sources and return both results for an A/B comparison: master vs reference, before vs after a fix, two encoders, two cuts.' + srcDoc,
-    inputSchema: cmp,
+    description: 'Run loudness analysis on TWO sources and return both results for an A/B comparison: master vs reference, before vs after a fix, two encoders, two cuts.' + MS_DOC + srcDoc,
+    inputSchema: { ...cmp, ...msShape, ...roundShape, ...scShape },
   }, wrap(async (i) => {
     const [a, b] = await Promise.all([
-      analyzeSource('mixlab/analyze', { url: i.urlA, path: i.pathA }, {}, apiKey, local),
-      analyzeSource('mixlab/analyze', { url: i.urlB, path: i.pathB }, {}, apiKey, local),
+      analyzeSource('mixlab/analyze', { url: i.urlA, path: i.pathA, measureStatus: i.measureStatus, round: i.round }, opt(i, 'spectrumCalc'), apiKey, local),
+      analyzeSource('mixlab/analyze', { url: i.urlB, path: i.pathB, measureStatus: i.measureStatus, round: i.round }, opt(i, 'spectrumCalc'), apiKey, local),
     ]);
     return { a, b };
   }));
@@ -349,7 +362,7 @@ export function buildServer({ apiKey, local = false } = {}) {
     : { urls: z.array(z.string().url()).min(1).max(20).describe('Public https URLs to audio files (max 20).') };
   tool('analyze_batch', {
     title: 'Batch: one analysis route over many files',
-    description: 'Run one analysis route over up to 20 audio sources in a single call. Returns per-item ok/data/error; each item is metered as one call. Routes: mixlab/analyze (default), mixlab/check-target, mixlab/timeseries, mixlab/spectrum, voicelab/qa, voicelab/segments, signallab/index. Use for folder QA, library indexing, or checking a whole release against a loudness target.' + (local ? ' Sources: public https urls and/or local file paths.' : ' Sources: public https urls.'),
+    description: 'Run one analysis route over up to 20 audio sources in a single call. Returns per-item ok/data/error; each item is metered as one call. Routes: mixlab/analyze (default), mixlab/check-target, mixlab/timeseries, mixlab/spectrum, voicelab/qa, voicelab/segments, signallab/index. Use for folder QA, library indexing, or checking a whole release against a loudness target. On mixlab/analyze, voicelab/qa and signallab/index each item carries measureStatus (on by default): report a proxy as an approximation, never a withdrawn field as what its name says.' + (local ? ' Sources: public https urls and/or local file paths.' : ' Sources: public https urls.'),
     inputSchema: {
       ...batchSrc,
       endpoint: z.string().optional().describe('Analysis route to run for every item (default mixlab/analyze).'),
@@ -357,8 +370,9 @@ export function buildServer({ apiKey, local = false } = {}) {
       lufs: z.number().optional().describe('For target="custom": integrated LUFS target.'),
       tp: z.number().optional().describe('For target="custom": max true-peak (dBTP).'),
       bandLimit: z.boolean().optional().describe('For signallab/index: also return bandLimit per file, with upsampled yes, no or cannot-say (see index_signal).'),
+      ...msShape, ...roundShape, ...seriesShape, ...cmShape, ...sdShape, ...scShape,
     },
-  }, wrap((i) => batchSources({ urls: i.urls || [], paths: i.paths || [] }, i.endpoint || 'mixlab/analyze', { target: i.target, lufs: i.lufs, tp: i.tp, bandLimit: i.bandLimit }, apiKey, local)));
+  }, wrap((i) => batchSources({ urls: i.urls || [], paths: i.paths || [] }, i.endpoint || 'mixlab/analyze', { target: i.target, lufs: i.lufs, tp: i.tp, bandLimit: i.bandLimit, measureStatus: i.measureStatus !== false, round: i.round !== false, ...opt(i, 'series', 'contentModel', 'speechDetector', 'spectrumCalc') }, apiKey, local)));
 
   return { server, toolNames };
 }
@@ -388,6 +402,21 @@ if (isMain && process.argv.includes('--selftest')) {
       sent = undefined;
       await assert.rejects(() => batchSources({ urls: ['https://example.com/a.wav'] }, 'mixlab/analyze', {}, undefined, false), /AUDIOLAB_API_KEY is not set\. Batches need a key/, 'batch refuses without a key');
       assert.equal(sent, undefined, 'the batch refusal happens before any fetch');
+    } finally { globalThis.fetch = realFetch; }
+  }
+
+  // measureStatus is on by default (0.5.3): a call carries it, measureStatus:false leaves it out.
+  {
+    const realFetch = globalThis.fetch;
+    let body;
+    globalThis.fetch = async (_url, init) => { body = JSON.parse(init.body); return new Response('{"ok":true}', { status: 200 }); };
+    try {
+      await analyzeSource('voicelab/qa', { url: 'https://example.com/a.wav' }, {}, 'al_live_selftest', false);
+      assert.equal(body.measureStatus, true, 'measureStatus goes out by default');
+      assert.equal(body.round, true, 'round goes out by default');
+      await analyzeSource('voicelab/qa', { url: 'https://example.com/a.wav', measureStatus: false, round: false }, {}, 'al_live_selftest', false);
+      assert.ok(!('measureStatus' in body), 'measureStatus:false leaves it out');
+      assert.ok(!('round' in body), 'round:false leaves it out');
     } finally { globalThis.fetch = realFetch; }
   }
 
@@ -427,7 +456,7 @@ if (isMain && process.argv.includes('--selftest')) {
     if (e?.code !== 'ERR_MODULE_NOT_FOUND') throw e;
   }
 
-  console.log(`selftest ok · v${PKG_VERSION} · ${expected.length} tools (incl. analyze_profile) + keyless trial and batch-key guard + remote-path refusals + batch guards`);
+  console.log(`selftest ok · v${PKG_VERSION} · ${expected.length} tools (incl. analyze_profile) + keyless trial and batch-key guard + remote-path refusals + batch guards + measureStatus and round on by default`);
   process.exit(0);
 }
 
