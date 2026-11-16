@@ -234,7 +234,7 @@ const MS_DOC = ' The answer carries measureStatus: per field its status (validat
 const msShape = { measureStatus: z.boolean().optional().describe('Add measureStatus to the answer: the status of each field. On by default; set false to leave it out.') };
 const roundShape = { round: z.boolean().optional().describe('Round numbers to what they are worth (dB and LUFS 2 decimals, seconds 3, ms 1, Hz 1, shares 3); same keys and types. On by default; set false for full precision.') };
 const scShape = { spectrumCalc: z.enum(['v1', 'v2']).optional().describe('Spectrum calculation: v1 (the default until 15 February 2027) or v2 (fixes three errors found against an independent calculation; values change a little, keys do not).') };
-const seriesShape = { series: z.boolean().optional().describe('Include the curves and per-block arrays (large payload). Off by default.') };
+const seriesShape = { series: z.boolean().optional().describe('Include the curves and arrays (a large payload). Off by default.') };
 const cmShape = { contentModel: z.enum(['v1', 'v2']).optional().describe('Content-type model: v1 (the default until 15 January 2027) or v2 (the newer small learned model).') };
 const sdShape = { speechDetector: z.enum(['v1', 'k2']).optional().describe('Speech detector: v1 (the default until 15 January 2027) or k2 (lets a phrase run on into its soft word starts and endings, at most 100 ms per side).') };
 const opt = (i, ...names) => Object.fromEntries(names.filter((n) => i[n] !== undefined).map((n) => [n, i[n]]));
@@ -284,12 +284,12 @@ export function buildServer({ apiKey, local = false } = {}) {
 
   tool('index_signal', {
     title: 'Index a signal (SignalLab)',
-    description: 'A metadata index for any audio file: content-type guess (voice/music/mixed/noise/silence) with confidence, brightness & dynamics buckets, a rough band label, clipping/silence regions, and tag suggestions. For triage or auto-tagging a library. Status: content type, regions and confidence come from a frame classifier that is a proxy, not validated on a labelled corpus of real recordings; the tags describe the signal only, never the speaker (https://audiolab.tools/lenses). Set bandLimit:true to ask whether the audio was upsampled: bandLimit.upsampled is yes, no or cannot-say, with the reason in plain words. yes rests on a validated rule (study UP-1: the band stops under 5 kHz in a file of 16 kHz or more, as after a telephone call); no and the bandwidth ratio are proxies (study UP-2); cannot-say means look at the file, not that it is fine.' + MS_DOC + srcDoc,
+    description: 'A metadata index for any audio file: content-type guess (voice/music/mixed/noise/silence/unknown) with confidence, brightness & dynamics buckets, a rough band label, clipping/silence regions, and tag suggestions. For triage or auto-tagging a library. Status: content type, regions and confidence come from a frame classifier that is a proxy, not validated on a labelled corpus of real recordings; the tags describe the signal only, never the speaker (https://audiolab.tools/lenses). Set bandLimit:true to ask whether the audio was upsampled: bandLimit.upsampled is yes, no or cannot-say, with the reason in plain words. yes rests on a validated rule (study UP-1: the band stops under 5 kHz in a file of 16 kHz or more, as after a telephone call); no and the bandwidth ratio are proxies (study UP-2); cannot-say means look at the file, not that it is fine.' + MS_DOC + srcDoc,
     inputSchema: {
-      ...src, ...msShape, ...roundShape, ...cmShape,
+      ...src, ...msShape, ...roundShape, ...seriesShape, ...cmShape,
       bandLimit: z.boolean().optional().describe('Also return bandLimit: whether the audio was upsampled (yes, no or cannot-say), its status, reason and basis. Off by default.'),
     },
-  }, wrap((i) => analyzeSource('signallab', i, { bandLimit: i.bandLimit, ...opt(i, 'contentModel') }, apiKey, local)));
+  }, wrap((i) => analyzeSource('signallab', i, { bandLimit: i.bandLimit, ...opt(i, 'contentModel', 'series') }, apiKey, local)));
 
   // analyze_profile: the lens registry as one tool. A model that knows what it
   // is looking for names the question, not forty field names; a model that does
@@ -305,12 +305,12 @@ export function buildServer({ apiKey, local = false } = {}) {
       + 'environment (what is in this space, and what kind of noise is it), '
       + 'broadcast (does this file meet the delivery spec), '
       + 'loop (is this loop clean, on the grid, and safe to drop in a DAW), '
-      + 'room (how long does this room ring per octave band, and is there a flutter echo; needs a recording of one clap, a balloon pop, an impulse response or a sweep), '
+      + 'room (how long does this room ring, per octave band with series:true, and is there a flutter echo; needs a recording of one clap, a balloon pop, an impulse response or a sweep), '
       + 'chain (did this recording lose packets on its way: gaps of digital silence), '
       + 'pitch (where does this voice sit, how much does it move, how clean is it). '
       + 'basic is the free tier; the other ten need a paid plan. '
       + 'Results are keyed by stable lens id. Only the analysis passes the profile needs are run. '
-      + 'Set series:true to also get the curves, the per-block lanes and the per-phrase values,'
+      + 'Set series:true to also get the curves, the per-block lanes and the per-phrase values, '
       + 'a much larger payload, so leave it off unless you are going to read them. '
       + 'Set liveEvents:true to also get liveEvents: the file read as a stream by the live monitor, with every dropout, clipping, level drop, dead air '
       + 'and hum event, its times and its reason. Status signals: none of these detectors has been validated on live streams yet, so say "a signal", '
