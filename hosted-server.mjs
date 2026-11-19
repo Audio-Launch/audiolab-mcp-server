@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// AudioLab HOSTED-mode MCP server. Exposes the 10 AudioLab tools to any MCP-capable
+// AudioLab HOSTED-mode MCP server. Exposes the 12 AudioLab tools to any MCP-capable
 // AI (Claude Desktop / Claude Code, Cursor, etc.) by calling the hosted API at
 // audiolab.tools/v1/*. It contains NO engine code, just HTTP calls, so it is safe to
 // distribute publicly without exposing the proprietary engine.
@@ -31,21 +31,14 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { createRequire } from 'node:module';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+import { realpathSync } from 'node:fs';
 import { z } from 'zod';
 import { withDocs } from './error-docs.mjs';
+import { VERSION as PKG_VERSION } from './version.mjs';
 
-// The version reported over MCP used to be a literal with a "keep in sync with
-// package.json" comment next to it. It drifted anyway: the package shipped 0.3.1
-// while every initialize response still announced 0.3.0. Read it instead, so the
-// comment cannot be ignored and the two cannot disagree.
-// ponytail: the npm package always ships package.json, the Vercel bundle of api/mcp.mjs
-// never does (includeFiles skips it too). A throw here took the remote /mcp down at load
-// time from 11 Aug to 14 Sep, so the hosted copy reports 'hosted' instead of crashing.
-const PKG_VERSION = (() => {
-  try { return createRequire(import.meta.url)('./package.json').version; } catch { return 'hosted'; }
-})();
+// De versie die MCP meldt staat in mcp/version.mjs: een gewone .mjs-import, die Vercel in de bundel van api/mcp.mjs meeneemt (package.json
+// zit daar niet in; de hosted server meldde daarom 'hosted'). scripts/agent-discovery.mjs --check faalt als version.mjs afwijkt van package.json.
 
 // Vercel serverless caps a raw request body at ~4.5 MB, so small files POST directly and
 // larger ones go through the signed-URL storage flow. The bucket policy caps at 150 MB.
@@ -171,6 +164,8 @@ async function readLocal(p) {
 // whole set goes out as ONE call with urls + objectPaths. Max 20 combined,
 // matching the server-side cap; each item is metered as one call server-side.
 const BATCH_MAX = 20;
+// Precies wat ALLOWED in api/batch.mjs aanneemt.
+const BATCH_ENDPOINTS = ['mixlab/analyze', 'mixlab/check-target', 'mixlab/timeseries', 'mixlab/spectrum', 'voicelab/qa', 'voicelab/segments', 'signallab', 'signallab/index'];
 async function batchSources({ urls = [], paths = [] }, endpoint, extra, key, local = false) {
   if (paths.length && !local) throw new Error('Local file paths are only supported by the local (stdio) MCP server; use public https urls instead.');
   const total = urls.length + paths.length;
@@ -239,10 +234,14 @@ const cmShape = { contentModel: z.enum(['v1', 'v2']).optional().describe('Conten
 const sdShape = { speechDetector: z.enum(['v1', 'k2']).optional().describe('Speech detector: v1 (the default until 15 January 2027) or k2 (lets a phrase run on into its soft word starts and endings, at most 100 ms per side).') };
 const opt = (i, ...names) => Object.fromEntries(names.filter((n) => i[n] !== undefined).map((n) => [n, i[n]]));
 
+// De normen van /v1/qc: starting-point en target-<preset> (QC_SPEC_IDS in api/audio.mjs; scripts/api-truth-check.mjs houdt ze gelijk).
+const QC_SPECS = ['starting-point', 'target-spotify', 'target-youtube', 'target-tidal', 'target-amazon-music', 'target-apple-music', 'target-podcast', 'target-tiktok', 'target-instagram', 'target-soundcloud', 'target-deezer', 'target-ebu-broadcast', 'target-atsc-broadcast'];
+
 export function buildServer({ apiKey, local = false } = {}) {
   const server = new McpServer({ name: 'audiolab', version: PKG_VERSION });
   const toolNames = [];
-  const tool = (name, def, handler) => { server.registerTool(name, def, handler); toolNames.push(name); };
+  // Alle tools lezen alleen (ze meten en schrijven niets terug) en praten met een open wereld (de API, een URL): clients hoeven niet bij elke aanroep te vragen.
+  const tool = (name, def, handler) => { server.registerTool(name, { annotations: { readOnlyHint: true, openWorldHint: true }, ...def }, handler); toolNames.push(name); };
   const src = sourceShape(local);
   const srcDoc = local ? ' Audio source: a public https URL, or a local file path (`path`).' : ' Audio source: public https URL.';
 
@@ -254,8 +253,8 @@ export function buildServer({ apiKey, local = false } = {}) {
 
   tool('check_target', {
     title: 'Check audio against a loudness target (Spotify, EBU, etc.)',
-    description: 'Verify whether audio hits a delivery target (Spotify -14 LUFS / EBU broadcast -23 / podcast -16 / etc.). Returns pass/fail with per-metric deltas and a concrete ffmpeg loudnorm command to fix if failing. Presets: spotify, apple-music, youtube, tidal, amazon-music, podcast, ebu-broadcast, atsc-broadcast; or target="custom" with lufs+tp.' + srcDoc,
-    inputSchema: { ...src, target: z.string().describe('Preset id or "custom".'), lufs: z.number().optional(), tp: z.number().optional() },
+    description: 'Verify whether audio hits a delivery target (Spotify -14 LUFS / EBU broadcast -23 / podcast -16 / etc.). Returns pass/fail with per-metric deltas and a concrete ffmpeg loudnorm command to fix if failing. Presets: spotify, apple-music, youtube, tidal, amazon-music, podcast, tiktok, instagram, soundcloud, deezer, ebu-broadcast, atsc-broadcast; or target="custom" with lufs+tp. With an account key, a target you saved on your account also works: give its slug as target (not on the keyless trial).' + srcDoc,
+    inputSchema: { ...src, target: z.string().describe('Preset id (spotify, apple-music, youtube, tidal, amazon-music, podcast, tiktok, instagram, soundcloud, deezer, ebu-broadcast, atsc-broadcast), the slug of a target saved on your account (needs an account key), or "custom" with lufs and tp.'), lufs: z.number().optional(), tp: z.number().optional() },
   }, wrap((i) => analyzeSource('mixlab/check-target', i, { target: i.target, lufs: i.lufs, tp: i.tp }, apiKey, local)));
 
   tool('analyze_timeseries', {
@@ -362,10 +361,10 @@ export function buildServer({ apiKey, local = false } = {}) {
     : { urls: z.array(z.string().url()).min(1).max(20).describe('Public https URLs to audio files (max 20).') };
   tool('analyze_batch', {
     title: 'Batch: one analysis route over many files',
-    description: 'Run one analysis route over up to 20 audio sources in a single call. Returns per-item ok/data/error; each item is metered as one call. Routes: mixlab/analyze (default), mixlab/check-target, mixlab/timeseries, mixlab/spectrum, voicelab/qa, voicelab/segments, signallab/index. Use for folder QA, library indexing, or checking a whole release against a loudness target. On mixlab/analyze, voicelab/qa and signallab/index each item carries measureStatus (on by default): report a proxy as an approximation, never a withdrawn field as what its name says.' + (local ? ' Sources: public https urls and/or local file paths.' : ' Sources: public https urls.'),
+    description: 'Run one analysis route over up to 20 audio sources in a single call. Returns per-item ok/data/error; each item is metered as one call. Routes: mixlab/analyze (default), mixlab/check-target, mixlab/timeseries, mixlab/spectrum, voicelab/qa, voicelab/segments, signallab (signallab/index also works). Use for folder QA, library indexing, or checking a whole release against a loudness target. On mixlab/analyze, voicelab/qa and signallab/index each item carries measureStatus (on by default): report a proxy as an approximation, never a withdrawn field as what its name says.' + (local ? ' Sources: public https urls and/or local file paths.' : ' Sources: public https urls.'),
     inputSchema: {
       ...batchSrc,
-      endpoint: z.string().optional().describe('Analysis route to run for every item (default mixlab/analyze).'),
+      endpoint: z.enum(BATCH_ENDPOINTS).optional().describe('Analysis route to run for every item (default mixlab/analyze). analyze/profile and qc are not batch routes.'),
       target: z.string().optional().describe('For mixlab/check-target: preset id (spotify, ebu-broadcast, podcast, …) or "custom".'),
       lufs: z.number().optional().describe('For target="custom": integrated LUFS target.'),
       tp: z.number().optional().describe('For target="custom": max true-peak (dBTP).'),
@@ -374,18 +373,59 @@ export function buildServer({ apiKey, local = false } = {}) {
     },
   }, wrap((i) => batchSources({ urls: i.urls || [], paths: i.paths || [] }, i.endpoint || 'mixlab/analyze', { target: i.target, lufs: i.lufs, tp: i.tp, bandLimit: i.bandLimit, measureStatus: i.measureStatus !== false, round: i.round !== false, ...opt(i, 'series', 'contentModel', 'speechDetector', 'spectrumCalc') }, apiKey, local)));
 
+  // get_usage: GET /v1/usage. Vraagt een sleutel, is gratis en telt niet als aanroep.
+  tool('get_usage', {
+    title: 'Where your API key stands this month',
+    description: 'Your plan, the period, calls used / limit / remaining, data used / limit / remaining (bytes) and requests per minute for the API key in use, the same numbers as /account. Needs a key; reading it is free and does not count as a call. Call it before a large batch to see what is left. On a trial key (no account) the answer carries a keep field; on a Voice key a voice field with the minutes.',
+    inputSchema: {},
+  }, wrap(() => request(`${apiBase()}/usage`, { method: 'GET', headers: auth(requireKey(apiKey, 'Usage figures')) })));
+
+  // check_qc: POST /v1/qc, een oordeel (pass, warn, fail) tegen een norm of eigen grenzen.
+  tool('check_qc', {
+    title: 'QC verdict against a spec or your own limits',
+    description: 'One verdict, pass / warn / fail, for a file against a spec or your own limits, rule by rule: each rule has the measured value, its status (validated, proxy, beta), the limit, an outcome (pass, fail, uncertain, information, not-measured), how far past the limit and what to do. There is no composite score: the verdict follows from the rules. A proxy only informs; a value past its limit by less than the margin of its measure is uncertain and gives warn; a measure that could not be taken is not-measured. Critical faults (voice.clipping, chain.dropoutCount, level.peak) are on by default. Send spec or limits, not both. spec: ' + QC_SPECS.join(', ') + '. limits: an object per lens id, up to 30, each {min?, max?}, for example {"loudness.integrated": {"min": -17, "max": -15}}; lens ids: https://audiolab.tools/lenses (room lenses need a clap or sweep and are not taken here). Guide: https://audiolab.tools/docs/start/qc-in-one-call' + srcDoc,
+    inputSchema: {
+      ...src,
+      spec: z.enum(QC_SPECS).optional().describe('A named set of limits: starting-point or target-<preset>. Send spec or limits, not both.'),
+      limits: z.record(z.string(), z.object({ min: z.number().optional(), max: z.number().optional() })).optional().describe('Your own limits per lens id: {"loudness.integrated": {"min": -17, "max": -15}}. Send spec or limits, not both.'),
+      critical: z.array(z.enum(['voice.clipping', 'chain.dropoutCount', 'level.peak'])).optional().describe('Which critical faults are on. All three by default; [] switches them off.'),
+    },
+  }, wrap(async (i) => {
+    const extra = { ...(i.spec ? { spec: i.spec } : {}), ...(i.limits ? { limits: i.limits } : {}), ...(i.critical ? { critical: i.critical } : {}) };
+    // limits en critical gaan alleen in een JSON-body (url of objectPath), niet in de query van een rauwe upload: een lokaal bestand gaat dan via opslag, dus met sleutel.
+    if (i.path && !i.url && (i.limits || i.critical)) {
+      if (!local) throw new Error('Local file paths are only supported by the local (stdio) MCP server; use a public https url instead.');
+      const buf = await readLocal(i.path);
+      return postUpload('qc', buf, ctForPath(i.path), basename(i.path), extra, apiKey);
+    }
+    return analyzeSource('qc', { url: i.url, path: i.path, measureStatus: false, round: false }, extra, apiKey, local);
+  }));
+
   return { server, toolNames };
 }
 
 // Run as a stdio server ONLY when executed directly. Importing this module (api/mcp.mjs)
 // is side-effect-free so it can reuse buildServer() without opening a stdio transport.
-const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+// Compare REAL paths: npm installs the bin as a symlink on macOS and Linux (node_modules/.bin/...), argv[1] keeps that
+// path while import.meta.url is the resolved file. Comparing the two as given made the server exit silently there
+// (audit 19 Nov 2026, MCP-02, confirmed on GitHub Actions run 44519173397). Windows worked because npm's .cmd shim
+// passes the real path.
+const echtPad = (p) => { try { return realpathSync(p); } catch { return p; } };
+const isMain = Boolean(process.argv[1]) && (() => {
+  try { return echtPad(fileURLToPath(import.meta.url)) === echtPad(process.argv[1]) || import.meta.url === pathToFileURL(process.argv[1]).href; } catch { return false; }
+})();
+
+// Started only to prove the check above (the selftest starts this file through a symlink): answer and stop.
+if (isMain && process.env.AUDIOLAB_MAIN_PROBE === '1') {
+  console.log('main-probe-ok');
+  process.exit(0);
+}
 
 if (isMain && process.argv.includes('--selftest')) {
   const assert = (await import('node:assert/strict')).default;
-  const expected = ['analyze_batch', 'analyze_loudness', 'analyze_profile', 'analyze_timeseries', 'analyze_voice', 'check_target', 'compare_loudness', 'get_spectrum', 'get_speech_segments', 'index_signal'];
-  assert.deepEqual(buildServer().toolNames.slice().sort(), expected, 'ten hosted tools (remote / url-only)');
-  assert.deepEqual(buildServer({ local: true }).toolNames.slice().sort(), expected, 'ten hosted tools (local / url+path)');
+  const expected = ['analyze_batch', 'analyze_loudness', 'analyze_profile', 'analyze_timeseries', 'analyze_voice', 'check_qc', 'check_target', 'compare_loudness', 'get_spectrum', 'get_speech_segments', 'get_usage', 'index_signal'];
+  assert.deepEqual(buildServer().toolNames.slice().sort(), expected, 'twelve hosted tools (remote / url-only)');
+  assert.deepEqual(buildServer({ local: true }).toolNames.slice().sort(), expected, 'twelve hosted tools (local / url+path)');
 
   const prev = process.env.AUDIOLAB_API_KEY;
   delete process.env.AUDIOLAB_API_KEY;
@@ -456,7 +496,26 @@ if (isMain && process.argv.includes('--selftest')) {
     if (e?.code !== 'ERR_MODULE_NOT_FOUND') throw e;
   }
 
-  console.log(`selftest ok · v${PKG_VERSION} · ${expected.length} tools (incl. analyze_profile) + keyless trial and batch-key guard + remote-path refusals + batch guards + measureStatus and round on by default`);
+  // Started through a symlinked folder, as npm does on macOS and Linux, the file still knows it is the entry point.
+  // Only the link itself is removed afterwards (unlink or rmdir, never a recursive delete through it).
+  {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { spawnSync } = await import('node:child_process');
+    const map = fs.mkdtempSync(path.join(os.tmpdir(), 'al-mcp-link-'));
+    const link = path.join(map, 'pakket');
+    fs.symlinkSync(path.dirname(fileURLToPath(import.meta.url)), link, 'junction');
+    try {
+      const r = spawnSync(process.execPath, [path.join(link, 'hosted-server.mjs')], { env: { ...process.env, AUDIOLAB_MAIN_PROBE: '1' }, encoding: 'utf8', timeout: 30000 });
+      assert.match(String(r.stdout), /main-probe-ok/, `started through a symlink the server must still start (stdout: ${String(r.stdout).slice(0, 120)}, stderr: ${String(r.stderr).slice(0, 200)})`);
+    } finally {
+      try { fs.unlinkSync(link); } catch { try { fs.rmdirSync(link); } catch { /* the link may already be gone */ } }
+      try { fs.rmdirSync(map); } catch { /* not empty: leave it, never delete recursively */ }
+    }
+  }
+
+  console.log(`selftest ok · v${PKG_VERSION} · ${expected.length} tools (incl. analyze_profile) + keyless trial and batch-key guard + remote-path refusals + batch guards + measureStatus and round on by default + starts through a symlink`);
   process.exit(0);
 }
 
